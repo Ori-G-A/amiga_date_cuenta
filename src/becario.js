@@ -120,8 +120,13 @@ export async function fetchSemana(weekStart) {
     if (desde) return desde;
   } else {
     // Sin esto el síntoma es una consola vacía: parece que Supabase falló cuando
-    // en realidad nunca se configuró (nombres de variables mal en Vercel).
-    console.warn("becario: falta VITE_SUPABASE_URL o VITE_SUPABASE_ANON_KEY, no se consultó Supabase.");
+    // en realidad nunca se configuró. Nombra la que falta: adivinar cuál de las
+    // dos era costó una tarde.
+    const falta = [
+      !import.meta.env.VITE_SUPABASE_URL && "VITE_SUPABASE_URL",
+      !(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY) && "VITE_SUPABASE_PUBLISHABLE_KEY",
+    ].filter(Boolean);
+    console.warn(`becario: no se consultó Supabase, falta ${falta.join(" y ")} en el build.`);
   }
   const url = (typeof window !== "undefined" && window.BECARIO_URL) || import.meta.env.VITE_BECARIO_URL;
   if (url) {

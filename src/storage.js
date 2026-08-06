@@ -3,7 +3,9 @@ import { createClient } from "@supabase/supabase-js";
 // Shim de window.storage: Supabase si hay credenciales, localStorage si no.
 // API esperada por App.jsx: get(key) -> { value } | null, set(key, value) -> boolean
 const url = import.meta.env.VITE_SUPABASE_URL;
-const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+// Supabase renombró la anon key a "publishable key". Acepto los dos nombres
+// porque el panel te ofrece uno y la documentación vieja el otro.
+const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export const supabase = url && anonKey ? createClient(url, anonKey) : null;
 
