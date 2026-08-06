@@ -86,12 +86,15 @@ function agregar(filas, weekStart) {
   return {
     semana: weekStart,
     fuente: "becario",
-    suenoDia: medida("sueno", +(h("sueno") / 7).toFixed(1)),
-    focoDia: medida("foco", +(h("foco") / 7).toFixed(1)),
+    // Dos decimales, no uno: estos valores se dividen por 7 acá y evaluar los
+    // vuelve a multiplicar. Con un decimal, todo lo que durara menos de 21
+    // minutos se redondeaba a 0.0 y desaparecía del reparto.
+    suenoDia: medida("sueno", +(h("sueno") / 7).toFixed(2)),
+    focoDia: medida("foco", +(h("foco") / 7).toFixed(2)),
     trabajoSemana: medida("trabajo", Math.round(h("trabajo"))),
-    cuidadoDia: medida("cuidado", +(h("cuidado") / 7).toFixed(1)),
+    cuidadoDia: medida("cuidado", +(h("cuidado") / 7).toFixed(2)),
     trasladoSemana: medida("traslado", +h("traslado").toFixed(1)),
-    comidaDia: medida("comida", +h("comida").toFixed(1)),
+    comidaDia: medida("comida", +h("comida").toFixed(2)),
     ejercicioSemana: medida("ejercicio", +h("ejercicio").toFixed(1)),
     sinCategoriaSemana: +h("sinCategoria").toFixed(1),
   };
@@ -172,8 +175,8 @@ export function evaluar(d) {
   // Cada alerta se calla si su dato no se mide: acusar por un null sería inventar.
   const alertas = [];
   if (d.suenoDia != null) {
-    if (d.suenoDia < 5) alertas.push({ sev: 5, gesto: "modoseria", texto: "Dormiste 5 horas o menos por noche. Con eso rendís un tercio menos y no es tema de actitud.", dato: `${d.suenoDia} h promedio` });
-    else if (d.suenoDia < OBJETIVOS.suenoDia) alertas.push({ sev: 3, gesto: "modoseria", texto: "Te faltó sueño casi toda la semana. Antes de tocar cualquier otra cosa, esto.", dato: `${d.suenoDia} h de ${OBJETIVOS.suenoDia}` });
+    if (d.suenoDia < 5) alertas.push({ sev: 5, gesto: "modoseria", texto: "Dormiste 5 horas o menos por noche. Con eso rendís un tercio menos y no es tema de actitud.", dato: `${d.suenoDia.toFixed(1)} h promedio` });
+    else if (d.suenoDia < OBJETIVOS.suenoDia) alertas.push({ sev: 3, gesto: "modoseria", texto: "Te faltó sueño casi toda la semana. Antes de tocar cualquier otra cosa, esto.", dato: `${d.suenoDia.toFixed(1)} h de ${OBJETIVOS.suenoDia}` });
   }
   if (foco != null && foco < 7) alertas.push({ sev: 4, gesto: "modoseria", texto: "Ni un bloque de 90 minutos para lo que de verdad importa. Y libre tenés tiempo.", dato: `${Math.round(foco)} h de foco · ${Math.round(libre)} h libres` });
   if (d.ejercicioSemana != null && d.ejercicioSemana < OBJETIVOS.ejercicioSemana) alertas.push({ sev: 2, gesto: "protectora", texto: "El cuerpo es la mente y esta semana quedó afuera del reparto.", dato: `${d.ejercicioSemana} h de ${OBJETIVOS.ejercicioSemana}` });
