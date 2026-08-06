@@ -4,6 +4,7 @@ import {
   GESTO_SPRITE, sugerirPara, pickLine, patronesSinResolver,
 } from "./amiga.js";
 import { fetchSemana, evaluar } from "./becario.js";
+import { supabase } from "./storage.js";
 
 const ENTRIES_KEY = "thought-records";
 const WEEKLY_KEY = "weekly-logs";
@@ -23,7 +24,7 @@ let idCounter = 0;
 const makeId = () => `${Date.now()}-${(idCounter++).toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 const emptyEmotion = (nombre) => ({ id: makeId(), nombre: nombre || "", antes: 50, despues: 50 });
 const emptyDraft = () => ({ id: null, fecha: new Date().toISOString().slice(0, 10), situacion: "", emociones: [], pensamiento: "", evidenciaFavor: "", evidenciaContra: "", alterno: "" });
-const emptyDay = () => ({ situacion: "", intensidad: "", estrategia: "", ayudo: "" });
+const emptyDay = () => ({ situacion: "", intensidad: "", estrategia: "", ayudo: "", azucar: false });
 
 const fmtFecha = (iso) => { const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}`; };
 const toISO = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -99,7 +100,6 @@ export default function App() {
   const [reaction, setReaction] = useState(null);
   const [sugPasosOpen, setSugPasosOpen] = useState(false);
   const [becario, setBecario] = useState(null);
-  const [becarioEval, setBecarioEval] = useState(null);
   const [bookYear, setBookYear] = useState(() => new Date().getFullYear());
   const [newBook, setNewBook] = useState({ titulo: "", autor: "", rating: 0 });
   const [contactoInput, setContactoInput] = useState("");
@@ -123,11 +123,8 @@ export default function App() {
 
   useEffect(() => {
     let vigente = true;
-    setBecario(null); setBecarioEval(null);
-    fetchSemana(weekStart).then((data) => {
-      if (!vigente) return;
-      setBecario(data); setBecarioEval(evaluar(data));
-    }).catch(() => {});
+    setBecario(null);
+    fetchSemana(weekStart).then((data) => { if (vigente) setBecario(data); }).catch(() => {});
     return () => { vigente = false; };
   }, [weekStart]);
 
@@ -233,6 +230,36 @@ export default function App() {
     } catch (e) {}
   }
 
+  // ---- respaldo ----
+  // Sin Supabase todo vive en localStorage: si se limpian los datos del navegador
+  // no hay de dónde volver. Este par de botones es la única red.
+  function descargarRespaldo() {
+    const data = { v: 1, fecha: new Date().toISOString(), entries, weeklyLogs, books };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: "application/json" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `amiga-date-cuenta-${toISO(new Date())}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function restaurarRespaldo(input) {
+    const file = input.files && input.files[0];
+    input.value = "";
+    if (!file) return;
+    let d;
+    try { d = JSON.parse(await file.text()); } catch (e) { alert("Ese archivo no se puede leer como JSON."); return; }
+    // frontera de confianza: un archivo cualquiera no puede pisar el diario
+    if (!d || !Array.isArray(d.entries) || !Array.isArray(d.books) || typeof d.weeklyLogs !== "object" || d.weeklyLogs === null) {
+      alert("Ese archivo no tiene la forma de un respaldo de esta app.");
+      return;
+    }
+    if (!confirm(`Esto reemplaza todo lo que tenés ahora por el respaldo: ${d.entries.length} registro(s), ${d.books.length} libro(s). ¿Seguimos?`)) return;
+    persistEntries(d.entries);
+    persistWeekly(d.weeklyLogs);
+    persistBooks(d.books);
+  }
+
   // ---- semana ----
   const currentWeek = weeklyLogs[weekStart] || { reflexion: "", days: {} };
   const weekDates = Array.from({ length: 7 }, (_, i) => addDaysISO(weekStart, i));
@@ -253,8 +280,8 @@ export default function App() {
       `Episodios de ansiedad — semana del ${fmtShort(weekDates[0])} al ${fmtShort(weekDates[6])}`, "",
       ...weekDates.flatMap((iso, i) => {
         const day = currentWeek.days[iso];
-        if (!day || (!day.situacion && !day.estrategia && day.intensidad === "" && !day.ayudo)) return [];
-        return [`${DAY_NAMES[i]} (${fmtShort(iso)})`, `  Situación: ${day.situacion || "—"}`, `  Intensidad: ${day.intensidad !== "" ? `${day.intensidad}/10` : "—"}`, `  Estrategia usada: ${day.estrategia || "—"}`, `  ¿Ayudó?: ${day.ayudo || "—"}`, ""];
+        if (!day || (!day.situacion && !day.estrategia && day.intensidad === "" && !day.ayudo && !day.azucar)) return [];
+        return [`${DAY_NAMES[i]} (${fmtShort(iso)})`, `  Situación: ${day.situacion || "—"}`, `  Intensidad: ${day.intensidad !== "" ? `${day.intensidad}/10` : "—"}`, `  Estrategia usada: ${day.estrategia || "—"}`, `  ¿Ayudó?: ${day.ayudo || "—"}`, `  Azúcar añadido: ${day.azucar ? "sí" : "no"}`, ""];
       }),
       `Obsesión de la semana: ${currentWeek.obsesion || "—"}`,
       `Contacté a: ${(currentWeek.contactos || []).length ? currentWeek.contactos.join(", ") : "—"}`, "",
@@ -347,6 +374,9 @@ export default function App() {
   const hoy = new Date();
   const diaDelAno = Math.floor((hoy - new Date(hoy.getFullYear(), 0, 0)) / 86400000);
   const sug = draft ? sugerirPara(draft.emociones) : null;
+  // El azúcar no lo sabe el becario: sale de lo que marcaste día a día en esta misma semana.
+  const azucarDias = weekDates.filter((iso) => (currentWeek.days[iso] || {}).azucar).length;
+  const becarioEval = becario ? evaluar({ ...becario, azucarDias }) : null;
   const alerta = becarioEval && becarioEval.principal;
   const alertaSprite = alerta ? (GESTO_SPRITE[alerta.gesto] || GESTO_SPRITE.modoseria) : null;
 
@@ -509,7 +539,18 @@ export default function App() {
               </div>
             ))}
 
-            <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--ink-soft)", lineHeight: 1.6, padding: "40px 20px 0" }}>Este cuaderno es un apoyo de autoobservación para tu proceso terapéutico — no lo reemplaza.</div>
+            <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 18, padding: "40px 20px 0" }}>
+              <button className="adc-link" style={{ ...linkBtn, fontSize: 12 }} onClick={descargarRespaldo}>Descargar respaldo</button>
+              <label className="adc-link" style={{ ...linkBtn, fontSize: 12 }}>
+                Restaurar respaldo
+                <input type="file" accept="application/json,.json" style={{ display: "none" }} onChange={(e) => restaurarRespaldo(e.target)} />
+              </label>
+              {supabase && (
+                <button className="adc-link" style={{ ...linkBtn, fontSize: 12, color: "var(--ink-soft)" }}
+                  onClick={() => supabase.auth.signOut()}>Cerrar sesión</button>
+              )}
+            </div>
+            <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--ink-soft)", lineHeight: 1.6, padding: "14px 20px 0" }}>Este cuaderno es un apoyo de autoobservación para tu proceso terapéutico — no lo reemplaza.</div>
           </div>
         )}
 
@@ -604,6 +645,13 @@ export default function App() {
                           );
                         })}
                       </div>
+                    </div>
+                    <div style={{ marginTop: 12 }}>
+                      <div style={{ ...label("0.06em"), marginBottom: 6 }}>Azúcar añadido</div>
+                      <button onClick={() => updateDayField(iso, "azucar", !day.azucar)}
+                        style={{ fontSize: 12, fontWeight: 500, border: `1px solid ${day.azucar ? "var(--danger)" : "var(--line)"}`, background: day.azucar ? "var(--danger-soft)" : "var(--card)", color: day.azucar ? "var(--danger)" : "var(--ink-soft)", borderRadius: 6, padding: "7px 14px", cursor: "pointer" }}>
+                        {day.azucar ? "Sí, hubo" : "No hubo"}
+                      </button>
                     </div>
                   </div>
                 );

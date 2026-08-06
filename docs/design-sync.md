@@ -21,6 +21,7 @@ fecha: 2026-08-05 — origen: `Amiga Date Cuenta.dc.html`
 | "Lecturas" (control anual) | `src/App.jsx` |
 | Guión de la amiga (reacciones, sugerencias, frases) | `src/amiga.js` |
 | Persistencia | `src/storage.js` (Supabase si hay credenciales, si no localStorage), `supabase.sql` |
+| Sesión (solo con Supabase) | `src/Sesion.jsx` — magic link; sin sesión App no se monta |
 | Reglas de contenido | `docs/control-acciones-insights.md` |
 | Sprites | `public/amiga/*.png` |
 
