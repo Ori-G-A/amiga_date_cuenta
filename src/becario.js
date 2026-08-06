@@ -100,7 +100,7 @@ function agregar(filas, weekStart) {
 async function desdeSupabase(weekStart) {
   const { data: ses } = await supabase.auth.getSession();
   const uid = ses.session?.user?.id;
-  if (!uid) return null;
+  if (!uid) { console.warn("becario: hay Supabase pero no hay sesión iniciada."); return null; }
   // El filtro por user_id es explícito a propósito: si uso_del_tiempo quedó sin
   // security_invoker, la RLS de bloque no se evalúa y la vista devolvería filas ajenas.
   const { data, error } = await supabase
@@ -118,6 +118,10 @@ export async function fetchSemana(weekStart) {
   if (supabase) {
     const desde = await desdeSupabase(weekStart);
     if (desde) return desde;
+  } else {
+    // Sin esto el síntoma es una consola vacía: parece que Supabase falló cuando
+    // en realidad nunca se configuró (nombres de variables mal en Vercel).
+    console.warn("becario: falta VITE_SUPABASE_URL o VITE_SUPABASE_ANON_KEY, no se consultó Supabase.");
   }
   const url = (typeof window !== "undefined" && window.BECARIO_URL) || import.meta.env.VITE_BECARIO_URL;
   if (url) {
