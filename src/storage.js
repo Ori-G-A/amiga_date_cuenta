@@ -6,6 +6,7 @@ const url = import.meta.env.VITE_SUPABASE_URL;
 // Supabase renombró la anon key a "publishable key". Acepto los dos nombres
 // porque el panel te ofrece uno y la documentación vieja el otro.
 const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
+const g = typeof window !== "undefined" ? window : globalThis;
 
 export const supabase = url && anonKey ? createClient(url, anonKey) : null;
 
@@ -16,7 +17,7 @@ async function userId() {
 }
 
 if (supabase) {
-  window.storage = {
+  g.storage = {
     async get(key) {
       // la RLS ya filtra por dueño; no hace falta repetir el user_id acá
       const { data, error } = await supabase.from("kv").select("value").eq("key", key).maybeSingle();
@@ -34,7 +35,7 @@ if (supabase) {
   };
 } else {
   // ponytail: fallback localStorage para desarrollo sin Supabase
-  window.storage = {
+  g.storage = {
     async get(key) {
       const value = localStorage.getItem(key);
       return value === null ? null : { value };

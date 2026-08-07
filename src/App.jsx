@@ -577,7 +577,7 @@ export default function App() {
                   <div style={{ ...mono, fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-soft)" }}>
                     Parte del becario · {becario && becario.fuente === "becario" ? "datos en vivo" : "serie simulada"}
                   </div>
-                  <div style={{ ...mono, fontSize: 10, color: "var(--ink-soft)" }}>{becarioEval.libre} h libres de 168</div>
+                  <div style={{ ...mono, fontSize: 10, color: "var(--ink-soft)" }}>{becarioEval.libre} h sin agendar de 168</div>
                 </div>
                 <div style={{ display: "flex", height: 9, borderRadius: 5, overflow: "hidden", background: "var(--paper-deep)" }}>
                   {becarioEval.segments.map((seg) => <div key={seg.key} title={`${seg.label}: ${seg.horas} h`} style={{ width: seg.width, background: seg.color }} />)}

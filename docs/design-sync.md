@@ -10,7 +10,12 @@ fecha: 2026-08-05 — origen: `Amiga Date Cuenta.dc.html`
 - Rediseño editorial completo (Fraunces + Inter + IBM Plex Mono, paleta oklch papel/tinta) portado a React.
 - Personaje ilustrado: 12 reacciones sueltas + sprite `gestos.png` (4 celdas) y `tonos.png` (6 celdas).
 - `control-acciones-insights.md` desarmado en reglas con gatillo: sugerencia por emoción, nota semanal por patrón, frase ancla diaria.
-- `becario.js`: fuente de tiempo semanal (endpoint `window.BECARIO_URL` o serie simulada) + evaluación contra objetivos → alerta modo-seria.
+- `becario.js`: fuente de tiempo semanal + evaluación contra objetivos → alerta modo-seria.
+  Lee **solo la vista `uso_del_tiempo`** del proyecto del becario, nunca las tablas crudas:
+  la vista ya resolvió tiempo real vs planeado, el área de cada bloque y los no cumplidos,
+  y no expone títulos (están cifrados con el PIN, que la amiga no tiene).
+  `categoria` y `tipo` son dos ejes distintos y no se cruzan; la amiga solo usa `categoria`.
+  Comprobación: `node becario.test.mjs`.
 - Vista nueva "Lecturas": control anual de libros con portada, autor y calificación.
 
 ## Mapa de pantallas

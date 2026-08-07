@@ -1,40 +1,40 @@
 // Fuente de datos del becario: distribución del tiempo de la semana.
+// Contrato de lectura: se lee SOLO la vista uso_del_tiempo, nunca las tablas
+// crudas. La vista ya resolvió tiempo real vs planeado, el área de cada bloque y
+// los bloques no cumplidos; y no expone títulos, que están cifrados con el PIN.
 // Orden de preferencia:
-//   1. Supabase — lee la vista uso_del_tiempo del proyecto del becario (mismo auth.uid()).
-//   2. VITE_BECARIO_URL — endpoint HTTP (GET ?semana=YYYY-MM-DD), por si algún día se separan.
+//   1. Supabase — misma sesión, mismo auth.uid() que el becario.
+//   2. VITE_BECARIO_URL — endpoint HTTP (GET ?semana=YYYY-MM-DD), por si se separan.
 //   3. Serie determinista simulada, para desarrollo sin nada conectado.
-import { supabase } from "./storage.js";
+// Import diferido a propósito: storage.js lee import.meta.env al cargarse, que
+// fuera de Vite no existe. Así becario.test.mjs puede importar agregar/evaluar
+// con node pelado. No cuesta un chunk aparte: main.jsx ya importa storage.js.
+const cliente = () => import("./storage.js").then((m) => m.supabase);
 
-export const OBJETIVOS = { suenoDia: 7.5, focoDia: 1.5, ejercicioSemana: 3, libresSemana: 46, azucarDias: 0 };
+export const OBJETIVOS = { suenoDia: 7.5, focoDia: 1.5, ejercicioSemana: 3, sinRegistrarSemana: 46, azucarDias: 0 };
 
-const COLORS = {
-  trabajo: "oklch(28% 0.02 150)",
-  sueno: "oklch(52% 0.085 150)",
-  foco: "oklch(48% 0.11 340)",
-  ejercicio: "oklch(62% 0.10 55)",
-  cuidado: "oklch(80% 0.03 80)",
-  comida: "oklch(86% 0.035 60)",
-  traslado: "oklch(72% 0.02 80)",
-  sinCategoria: "oklch(78% 0.015 80)",
-  libre: "oklch(92% 0.02 80)",
+// La taxonomía de categoria_vida, tal cual la nombra el becario: son ocho valores
+// fijos y sus nombres no cambian (si cambiaran, la serie histórica dejaría de ser
+// comparable). Sin traducción de por medio: la clave ES la categoría.
+// El orden acá es el orden de la barra.
+const CATEGORIAS = {
+  sueno: ["Sueño", "oklch(52% 0.085 150)"],
+  trabajo: ["Trabajo", "oklch(28% 0.02 150)"],
+  foco_profundo: ["Foco profundo", "oklch(48% 0.11 340)"],
+  ejercicio: ["Ejercicio", "oklch(62% 0.10 55)"],
+  cuidado_personal: ["Cuidado personal", "oklch(80% 0.03 80)"],
+  comida: ["Comida", "oklch(86% 0.035 60)"],
+  traslado: ["Traslado", "oklch(72% 0.02 80)"],
+  libre: ["Libre agendado", "oklch(88% 0.045 140)"],
 };
+// Bloque de autocuidado suelto, sin tarea ni iniciativa: tiempo real sin etiquetar.
+// Se reporta, no se descarta — que haya horas sin clasificar es un hallazgo.
+const SIN_CLASIFICAR = ["Sin clasificar", "oklch(78% 0.015 80)"];
+const SIN_REGISTRAR = ["Sin registrar", "oklch(94% 0.012 80)"];
 
-// categoria_vida (enum del becario) → clave del reparto.
-// Solo lo confirmado: las tres primeras salen de la definición de la vista.
-// El becario no separa ejercicio ni dormir: ambos caen dentro de autocuidado.
-// Lo que llegue y no esté acá se avisa por consola; no se inventan números.
-const CATEGORIA = {
-  sueno: "sueno",
-  foco_profundo: "foco",
-  trabajo: "trabajo",
-  autocuidado: "cuidado",
-};
-
-// Lo que el becario puede medir. Una clave fuera de acá vale null ("no lo sé"),
-// que no es lo mismo que 0 ("cero horas") — si no, sus alertas saltarían siempre.
-const MEDIBLES = new Set(Object.values(CATEGORIA));
-const medida = (clave, horas) => (MEDIBLES.has(clave) ? horas : null);
-
+// Bogotá es UTC-5 fijo, sin horario de verano. Sin el offset explícito el rango se
+// corre cinco horas y los bloques de la madrugada caen en la semana equivocada.
+const TZ = "-05:00";
 const addDays = (iso, n) => { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 
 function seeded(str) {
@@ -48,78 +48,58 @@ function mock(weekStart) {
   return {
     semana: weekStart,
     fuente: "simulada",
-    suenoDia: +(5.2 + r() * 3.1).toFixed(1),
-    focoDia: +(r() * 2.2).toFixed(1),
-    trabajoSemana: Math.round(36 + r() * 12),
-    trasladoSemana: +(2.5 + r() * 4).toFixed(1),
-    cuidadoDia: +(1 + r() * 1).toFixed(1),
-    comidaDia: +(0.7 + r() * 0.8).toFixed(1),
-    ejercicioSemana: +(r() * 4.2).toFixed(1),
+    horas: {
+      sueno: +(36 + r() * 21).toFixed(1),
+      trabajo: Math.round(30 + r() * 12),
+      foco_profundo: +(r() * 15).toFixed(1),
+      ejercicio: +(r() * 4.2).toFixed(1),
+      cuidado_personal: +(3 + r() * 4).toFixed(1),
+      comida: +(5 + r() * 4).toFixed(1),
+      traslado: +(2.5 + r() * 4).toFixed(1),
+      libre: +(r() * 6).toFixed(1),
+      sin_clasificar: +(r() * 3).toFixed(1),
+    },
     // azucarDias no va acá: el becario mide tiempo, no ingestas. Lo inyecta App
     // desde lo que marcaste en la ficha de cada día.
   };
 }
 
-function agregar(filas, weekStart) {
+export function agregar(filas) {
   const min = {};
   const sinMapear = new Set();
   for (const f of filas) {
-    if (f.categoria == null) { min.sinCategoria = (min.sinCategoria || 0) + (f.minutos || 0); continue; }
-    const clave = CATEGORIA[f.categoria];
-    if (!clave) { sinMapear.add(f.categoria); continue; }
-    min[clave] = (min[clave] || 0) + (f.minutos || 0);
+    // Una fila por bloque, área ya resuelta: sumar minutos nunca cuenta doble.
+    if (f.categoria == null) { min.sin_clasificar = (min.sin_clasificar || 0) + (f.minutos || 0); continue; }
+    if (!CATEGORIAS[f.categoria]) { sinMapear.add(f.categoria); continue; }
+    min[f.categoria] = (min[f.categoria] || 0) + (f.minutos || 0);
   }
   if (sinMapear.size) {
-    console.warn("becario: categorías sin mapear en CATEGORIA (esas horas no se cuentan):", [...sinMapear]);
+    console.warn("becario: categorías fuera del contrato (esas horas no se cuentan):", [...sinMapear]);
   }
-  // ponytail: diagnóstico temporal. Muestra las combinaciones tipo × categoría reales
-  // para terminar de armar el mapa sin correr SQL. Borrar cuando CATEGORIA esté completo.
-  const desglose = {};
-  for (const f of filas) {
-    const k = `${f.tipo ?? "—"} × ${f.categoria ?? "sin categoría"}`;
-    desglose[k] = (desglose[k] || 0) + (f.minutos || 0);
-  }
-  console.table(Object.entries(desglose)
-    .sort((a, b) => b[1] - a[1])
-    .map(([combo, m]) => ({ "tipo × categoria": combo, horas: +(m / 60).toFixed(1) })));
-  const h = (k) => (min[k] || 0) / 60;
-  return {
-    semana: weekStart,
-    fuente: "becario",
-    // Dos decimales, no uno: estos valores se dividen por 7 acá y evaluar los
-    // vuelve a multiplicar. Con un decimal, todo lo que durara menos de 21
-    // minutos se redondeaba a 0.0 y desaparecía del reparto.
-    suenoDia: medida("sueno", +(h("sueno") / 7).toFixed(2)),
-    focoDia: medida("foco", +(h("foco") / 7).toFixed(2)),
-    trabajoSemana: medida("trabajo", Math.round(h("trabajo"))),
-    cuidadoDia: medida("cuidado", +(h("cuidado") / 7).toFixed(2)),
-    trasladoSemana: medida("traslado", +h("traslado").toFixed(1)),
-    comidaDia: medida("comida", +h("comida").toFixed(2)),
-    ejercicioSemana: medida("ejercicio", +h("ejercicio").toFixed(1)),
-    sinCategoriaSemana: +h("sinCategoria").toFixed(1),
-  };
+  const horas = {};
+  for (const k of Object.keys(min)) horas[k] = min[k] / 60;
+  return horas;
 }
 
-async function desdeSupabase(weekStart) {
+async function desdeSupabase(supabase, weekStart) {
   const { data: ses } = await supabase.auth.getSession();
-  const uid = ses.session?.user?.id;
-  if (!uid) { console.warn("becario: hay Supabase pero no hay sesión iniciada."); return null; }
-  // El filtro por user_id es explícito a propósito: si uso_del_tiempo quedó sin
-  // security_invoker, la RLS de bloque no se evalúa y la vista devolvería filas ajenas.
+  if (!ses.session?.user?.id) { console.warn("becario: hay Supabase pero no hay sesión iniciada."); return null; }
+  // La vista tiene security_invoker: la RLS de bloque se evalúa con esta sesión,
+  // así que no hace falta filtrar por user_id. Sin sesión devuelve cero filas.
   const { data, error } = await supabase
     .from("uso_del_tiempo")
-    .select("categoria, tipo, minutos")
-    .eq("user_id", uid)
-    .gte("inicio", `${weekStart}T00:00:00`)
-    .lt("inicio", `${addDays(weekStart, 7)}T00:00:00`);
+    .select("categoria, minutos")
+    .gte("inicio", `${weekStart}T00:00:00${TZ}`)
+    .lt("inicio", `${addDays(weekStart, 7)}T00:00:00${TZ}`);
   if (error) { console.warn("becario: falló la consulta a uso_del_tiempo:", error.message); return null; }
-  if (!data.length) { console.warn(`becario: cero bloques en la semana del ${weekStart} para el usuario ${uid}`); return null; }
-  return agregar(data, weekStart);
+  if (!data.length) { console.warn(`becario: cero bloques en la semana del ${weekStart}.`); return null; }
+  return { semana: weekStart, fuente: "becario", horas: agregar(data) };
 }
 
 export async function fetchSemana(weekStart) {
+  const supabase = await cliente();
   if (supabase) {
-    const desde = await desdeSupabase(weekStart);
+    const desde = await desdeSupabase(supabase, weekStart);
     if (desde) return desde;
   } else {
     // Sin esto el síntoma es una consola vacía: parece que Supabase falló cuando
@@ -148,41 +128,34 @@ export async function fetchSemana(weekStart) {
 }
 
 export function evaluar(d) {
-  const sem = (v, factor = 1) => (v == null ? null : v * factor); // null = no medido
-  const sueno = sem(d.suenoDia, 7);
-  const foco = sem(d.focoDia, 7);
-  const bruto = [
-    ["trabajo", "Trabajo", d.trabajoSemana],
-    ["sueno", "Sueño", sueno],
-    ["foco", "Foco profundo", foco],
-    ["ejercicio", "Ejercicio", d.ejercicioSemana],
-    ["cuidado", "Cuidado personal", sem(d.cuidadoDia, 7)],
-    ["comida", "Comida", sem(d.comidaDia, 7)],
-    ["traslado", "Traslado", d.trasladoSemana],
-    // Horas registradas que el becario no supo clasificar. Sin esto engordarían
-    // el "libre" y el reparto mentiría.
-    ["sinCategoria", "Sin categoría", d.sinCategoriaSemana],
-  ].filter(([, , horas]) => horas != null && horas > 0);
+  const h = d.horas || {};
+  const bruto = Object.entries(CATEGORIAS)
+    .map(([key, [label, color]]) => [key, label, color, h[key] || 0])
+    .concat([["sin_clasificar", ...SIN_CLASIFICAR, h.sin_clasificar || 0]])
+    .filter(([, , , horas]) => horas > 0);
 
-  const usado = bruto.reduce((a, b) => a + b[2], 0);
-  const libre = Math.max(0, 168 - usado);
-  const segments = [...bruto, ["libre", "Libre", libre]].map(([key, label, horas]) => ({
+  const usado = bruto.reduce((a, b) => a + b[3], 0);
+  // Lo que sobra de las 168 h no es tiempo libre: es tiempo que no quedó agendado
+  // en ningún bloque. "libre" a secas ya existe como categoría y significa otra cosa.
+  const sinRegistrar = Math.max(0, 168 - usado);
+  const segments = [...bruto, ["sin_registrar", ...SIN_REGISTRAR, sinRegistrar]].map(([key, label, color, horas]) => ({
     key, label, horas: Math.round(horas),
     width: `${((horas / 168) * 100).toFixed(2)}%`,
-    color: COLORS[key],
+    color,
   }));
 
-  // Cada alerta se calla si su dato no se mide: acusar por un null sería inventar.
+  const suenoDia = (h.sueno || 0) / 7;
+  const focoSemana = h.foco_profundo || 0;
   const alertas = [];
-  if (d.suenoDia != null) {
-    if (d.suenoDia < 5) alertas.push({ sev: 5, gesto: "modoseria", texto: "Dormiste 5 horas o menos por noche. Con eso rendís un tercio menos y no es tema de actitud.", dato: `${d.suenoDia.toFixed(1)} h promedio` });
-    else if (d.suenoDia < OBJETIVOS.suenoDia) alertas.push({ sev: 3, gesto: "modoseria", texto: "Te faltó sueño casi toda la semana. Antes de tocar cualquier otra cosa, esto.", dato: `${d.suenoDia.toFixed(1)} h de ${OBJETIVOS.suenoDia}` });
-  }
-  if (foco != null && foco < 7) alertas.push({ sev: 4, gesto: "modoseria", texto: "Ni un bloque de 90 minutos para lo que de verdad importa. Y libre tenés tiempo.", dato: `${Math.round(foco)} h de foco · ${Math.round(libre)} h libres` });
-  if (d.ejercicioSemana != null && d.ejercicioSemana < OBJETIVOS.ejercicioSemana) alertas.push({ sev: 2, gesto: "protectora", texto: "El cuerpo es la mente y esta semana quedó afuera del reparto.", dato: `${d.ejercicioSemana} h de ${OBJETIVOS.ejercicioSemana}` });
+  if (suenoDia < 5) alertas.push({ sev: 5, gesto: "modoseria", texto: "Dormiste 5 horas o menos por noche. Con eso rendís un tercio menos y no es tema de actitud.", dato: `${suenoDia.toFixed(1)} h promedio` });
+  else if (suenoDia < OBJETIVOS.suenoDia) alertas.push({ sev: 3, gesto: "modoseria", texto: "Te faltó sueño casi toda la semana. Antes de tocar cualquier otra cosa, esto.", dato: `${suenoDia.toFixed(1)} h de ${OBJETIVOS.suenoDia}` });
+  if (focoSemana < OBJETIVOS.focoDia * 7) alertas.push({ sev: 4, gesto: "modoseria", texto: "Ni un bloque de 90 minutos para lo que de verdad importa. Y libre tenés tiempo.", dato: `${focoSemana.toFixed(1)} h de foco · ${Math.round(sinRegistrar)} h sin agendar` });
+  if ((h.ejercicio || 0) < OBJETIVOS.ejercicioSemana) alertas.push({ sev: 2, gesto: "protectora", texto: "El cuerpo es la mente y esta semana quedó afuera del reparto.", dato: `${(h.ejercicio || 0).toFixed(1)} h de ${OBJETIVOS.ejercicioSemana}` });
   if (d.azucarDias >= 4) alertas.push({ sev: 1.5, gesto: "condescendiente", texto: "Azúcar casi todos los días. No te voy a dar el discurso; ya lo sabés.", dato: `${d.azucarDias} de 7 días` });
-  if (foco != null && libre > 45 && foco >= 7) alertas.push({ sev: 1, gesto: "complice", texto: "Sobran horas libres y encima aparecieron bloques de foco. Aprovechá la racha.", dato: `${Math.round(libre)} h libres` });
+  // Horas registradas sin etiqueta: no se descartan en silencio, se preguntan.
+  if ((h.sin_clasificar || 0) >= 2) alertas.push({ sev: 1.8, gesto: "chismosa2", texto: "Hay horas registradas que no le reportan a ninguna iniciativa. ¿En qué se te fueron?", dato: `${h.sin_clasificar.toFixed(1)} h sin clasificar` });
+  if (sinRegistrar > OBJETIVOS.sinRegistrarSemana && focoSemana >= OBJETIVOS.focoDia * 7) alertas.push({ sev: 1, gesto: "complice", texto: "Sobran horas sin agendar y encima aparecieron bloques de foco. Aprovechá la racha.", dato: `${Math.round(sinRegistrar)} h sin agendar` });
   alertas.sort((a, b) => b.sev - a.sev);
 
-  return { segments, libre: Math.round(libre), alertas, principal: alertas[0] || null, extra: Math.max(0, alertas.length - 1) };
+  return { segments, libre: Math.round(sinRegistrar), alertas, principal: alertas[0] || null, extra: Math.max(0, alertas.length - 1) };
 }
