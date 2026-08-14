@@ -61,7 +61,9 @@ const mono = { fontFamily: "'IBM Plex Mono',monospace" };
 const serif = { fontFamily: "'Fraunces',serif" };
 const label = (ls = "0.08em") => ({ ...mono, fontSize: 10.5, letterSpacing: ls, textTransform: "uppercase", color: "var(--ink-soft)", marginBottom: 8 });
 const field = { width: "100%", fontFamily: "'Inter',sans-serif", fontSize: 14.5, border: "none", borderBottom: "1px solid var(--line)", background: "transparent", padding: "8px 2px", color: "var(--ink)" };
-const area = { ...field, resize: "vertical", lineHeight: 1.5 };
+// ponytail: field-sizing crece el textarea con el texto, sin JS. Donde no lo soporten
+// (Safari) queda el minHeight de siempre y el resize manual, que ya estaba.
+const area = { ...field, resize: "vertical", lineHeight: 1.5, fieldSizing: "content", maxHeight: "45vh", overflowY: "auto" };
 const roundBtn = { border: "1px solid var(--line)", background: "var(--card)", borderRadius: "50%", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--ink)" };
 const linkBtn = { background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 500, color: "var(--ink)", padding: 0 };
 
@@ -878,7 +880,7 @@ export default function App() {
                 ["Pensamiento alternativo", "alterno", "Con la evidencia en mano, ¿qué pensamiento es más equilibrado?"]].map(([t, f, ph], i, arr) => (
                 <div key={f} style={{ marginBottom: i === arr.length - 1 ? 8 : 20 }}>
                   <div style={label()}>{t}</div>
-                  <textarea style={{ ...area, minHeight: 56 }} placeholder={ph} value={draft[f]} onChange={(e) => updateDraftField(f, e.target.value)} />
+                  <textarea style={{ ...area, minHeight: 88 }} placeholder={ph} value={draft[f]} onChange={(e) => updateDraftField(f, e.target.value)} />
                 </div>
               ))}
             </div>
