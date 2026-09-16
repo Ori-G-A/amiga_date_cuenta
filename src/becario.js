@@ -35,7 +35,29 @@ const SIN_REGISTRAR = ["Sin registrar", "oklch(94% 0.012 80)"];
 // Bogotá es UTC-5 fijo, sin horario de verano. Sin el offset explícito el rango se
 // corre cinco horas y los bloques de la madrugada caen en la semana equivocada.
 const TZ = "-05:00";
-const addDays = (iso, n) => { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+const addDays = (iso, n) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const diaBogota = (iso) => new Date(new Date(iso).getTime() - 5 * 3600000).toISOString().slice(0, 10);
+
+// Una noche pertenece al día de despertar. Nunca convertir días sin registro
+// en noches de cero horas, ni un bloque planeado en sueño confirmado.
+export function resumirSemana(filas, weekStart, ahora = new Date()) {
+  const hasta = addDays(weekStart, 7);
+  const noches = new Map();
+  const incluidas = filas.filter((f) => {
+    const dia = diaBogota(f.categoria === "sueno" ? f.fin : f.inicio);
+    return dia >= weekStart && dia < hasta;
+  });
+  for (const f of incluidas) {
+    if (f.categoria !== "sueno" || !f.con_registro_real || new Date(f.fin) > ahora) continue;
+    if (!(f.minutos > 0)) continue;
+    const dia = diaBogota(f.fin);
+    noches.set(dia, (noches.get(dia) || 0) + f.minutos);
+  }
+  return {
+    horas: agregar(incluidas),
+    suenoRegistrado: { noches: noches.size, horas: [...noches.values()].reduce((a, b) => a + b, 0) / 60 },
+  };
+}
 
 function seeded(str) {
   let h = 2166136261;
@@ -88,12 +110,12 @@ async function desdeSupabase(supabase, weekStart) {
   // así que no hace falta filtrar por user_id. Sin sesión devuelve cero filas.
   const { data, error } = await supabase
     .from("uso_del_tiempo")
-    .select("categoria, minutos")
-    .gte("inicio", `${weekStart}T00:00:00${TZ}`)
+    .select("categoria, minutos, inicio, fin, con_registro_real")
+    .gte("inicio", `${addDays(weekStart, -1)}T00:00:00${TZ}`)
     .lt("inicio", `${addDays(weekStart, 7)}T00:00:00${TZ}`);
   if (error) { console.warn("becario: falló la consulta a uso_del_tiempo:", error.message); return null; }
   if (!data.length) { console.warn(`becario: cero bloques en la semana del ${weekStart}.`); return null; }
-  return { semana: weekStart, fuente: "becario", horas: agregar(data) };
+  return { semana: weekStart, fuente: "becario", ...resumirSemana(data, weekStart) };
 }
 
 export async function fetchSemana(weekStart) {
@@ -144,11 +166,13 @@ export function evaluar(d) {
     color,
   }));
 
-  const suenoDia = (h.sueno || 0) / 7;
+  const noches = d.suenoRegistrado?.noches || 0;
+  const suenoDia = noches > 0 ? d.suenoRegistrado.horas / noches : null;
   const focoSemana = h.foco_profundo || 0;
   const alertas = [];
-  if (suenoDia < 5) alertas.push({ sev: 5, gesto: "modoseria", texto: "Dormiste 5 horas o menos por noche. Con eso rendís un tercio menos y no es tema de actitud.", dato: `${suenoDia.toFixed(1)} h promedio` });
-  else if (suenoDia < OBJETIVOS.suenoDia) alertas.push({ sev: 3, gesto: "modoseria", texto: "Te faltó sueño casi toda la semana. Antes de tocar cualquier otra cosa, esto.", dato: `${suenoDia.toFixed(1)} h de ${OBJETIVOS.suenoDia}` });
+  if (suenoDia === null) alertas.push({ sev: 1, gesto: "chismosa2", texto: "No hay noches con registro real suficiente para calcular cuánto dormiste. Completa inicio y fin en El Becario.", dato: "Sueño: sin datos confirmados" });
+  else if (suenoDia < 5) alertas.push({ sev: 5, gesto: "modoseria", texto: "En los días con sueño registrado, el promedio fue menor de 5 horas. Revisemos ese descanso.", dato: `${suenoDia.toFixed(1)} h promedio · ${noches} día(s) con registro` });
+  else if (suenoDia < OBJETIVOS.suenoDia) alertas.push({ sev: 3, gesto: "modoseria", texto: "El sueño registrado quedó por debajo de tu objetivo. Los días sin datos no cuentan como cero horas.", dato: `${suenoDia.toFixed(1)} h de ${OBJETIVOS.suenoDia} · ${noches} día(s) con registro` });
   if (focoSemana < OBJETIVOS.focoDia * 7) alertas.push({ sev: 4, gesto: "modoseria", texto: "Ni un bloque de 90 minutos para lo que de verdad importa. Y libre tenés tiempo.", dato: `${focoSemana.toFixed(1)} h de foco · ${Math.round(sinRegistrar)} h sin agendar` });
   if ((h.ejercicio || 0) < OBJETIVOS.ejercicioSemana) alertas.push({ sev: 2, gesto: "protectora", texto: "El cuerpo es la mente y esta semana quedó afuera del reparto.", dato: `${(h.ejercicio || 0).toFixed(1)} h de ${OBJETIVOS.ejercicioSemana}` });
   if (d.azucarDias >= 4) alertas.push({ sev: 1.5, gesto: "condescendiente", texto: "Azúcar casi todos los días. No te voy a dar el discurso; ya lo sabés.", dato: `${d.azucarDias} de 7 días` });
