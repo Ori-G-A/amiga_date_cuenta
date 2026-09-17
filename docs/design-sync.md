@@ -23,6 +23,7 @@ fecha: 2026-08-05 — origen: `Amiga Date Cuenta.dc.html`
 |---|---|
 | "Pensamientos" (diario + panel nuevo/editar + sugerencia por emoción) | `src/App.jsx` |
 | "Episodios ansiosos" (semanal + parte del becario + nota de la amiga) | `src/App.jsx`, `src/becario.js` |
+| "Valores" (áreas de vida: valores, actividades, disfrute e importancia) — no vino de Design | `src/App.jsx` |
 | "Lecturas" (control anual) | `src/App.jsx` |
 | Guión de la amiga (reacciones, sugerencias, frases) | `src/amiga.js` |
 | Persistencia | `src/storage.js` (Supabase si hay credenciales, si no localStorage), `supabase.sql` |

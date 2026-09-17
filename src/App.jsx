@@ -9,6 +9,12 @@ import { supabase } from "./storage.js";
 const ENTRIES_KEY = "thought-records";
 const WEEKLY_KEY = "weekly-logs";
 const BOOKS_KEY = "reading-log";
+const VALUES_KEY = "values-matrix";
+
+// Hoja de áreas de vida: por área, hasta 3 valores; por valor, 3 a 5 actividades.
+const AREAS = [["relaciones", "Relaciones"], ["educacion", "Educación/Carrera"], ["recreacion", "Recreación/Intereses"], ["cuerpo", "Cuerpo, mente, espiritualidad"], ["responsabilidades", "Responsabilidades diarias"]];
+// Escala fija de disfrute e importancia. Si la hoja de terapia dice 1 a 5, se cambia acá.
+const ESCALA = [0, 10];
 
 // ponytail: eran props del Design Component; acá no hay panel de props.
 const TONO = "mixto";
@@ -25,6 +31,12 @@ const makeId = () => `${Date.now()}-${(idCounter++).toString(36)}-${Math.random(
 const emptyEmotion = (nombre) => ({ id: makeId(), nombre: nombre || "", antes: 50, despues: 50 });
 const emptyDraft = () => ({ id: null, fecha: new Date().toISOString().slice(0, 10), situacion: "", emociones: [], pensamiento: "", evidenciaFavor: "", evidenciaContra: "", alterno: "" });
 const emptyDay = () => ({ situacion: "", intensidad: "", estrategia: "", ayudo: "", azucar: false });
+const emptyValor = () => ({ valor: "", actividades: [] });
+const emptyActividad = () => ({ texto: "", disfrute: "", importancia: "" });
+const actLlena = (a) => a && (a.texto || a.disfrute !== "" || a.importancia !== "");
+const valorLleno = (b) => b && (b.valor || b.actividades.some(actLlena));
+// ponytail: como renglones de hoja, siempre queda uno vacío después del último lleno, entre un mínimo y un tope.
+const renglones = (items, min, max, lleno) => Math.min(max, Math.max(min, items.findLastIndex(lleno) + 2));
 
 const fmtFecha = (iso) => { const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}`; };
 const toISO = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -93,6 +105,8 @@ export default function App() {
   const [entries, setEntries] = useState([]);
   const [weeklyLogs, setWeeklyLogs] = useState({});
   const [books, setBooks] = useState([]);
+  const [valores, setValores] = useState({});
+  const [valoresCopied, setValoresCopied] = useState(false);
   const [openId, setOpenId] = useState(null);
   const [draft, setDraft] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
@@ -111,7 +125,7 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      for (const [key, set] of [[ENTRIES_KEY, setEntries], [WEEKLY_KEY, setWeeklyLogs], [BOOKS_KEY, setBooks]]) {
+      for (const [key, set] of [[ENTRIES_KEY, setEntries], [WEEKLY_KEY, setWeeklyLogs], [BOOKS_KEY, setBooks], [VALUES_KEY, setValores]]) {
         try {
           const res = await window.storage.get(key);
           if (res && res.value) set(JSON.parse(res.value));
@@ -137,6 +151,7 @@ export default function App() {
   const persistEntries = (next) => persist(ENTRIES_KEY, setEntries, next);
   const persistWeekly = (next) => persist(WEEKLY_KEY, setWeeklyLogs, next);
   const persistBooks = (next) => persist(BOOKS_KEY, setBooks, next);
+  const persistValores = (next) => persist(VALUES_KEY, setValores, next);
 
   // ---- reacción de la amiga al guardar ----
   function showReaction(entry, allEntries) {
@@ -236,7 +251,7 @@ export default function App() {
   // Sin Supabase todo vive en localStorage: si se limpian los datos del navegador
   // no hay de dónde volver. Este par de botones es la única red.
   function descargarRespaldo() {
-    const data = { v: 1, fecha: new Date().toISOString(), entries, weeklyLogs, books };
+    const data = { v: 1, fecha: new Date().toISOString(), entries, weeklyLogs, books, valores };
     const url = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: "application/json" }));
     const a = document.createElement("a");
     a.href = url;
@@ -260,6 +275,8 @@ export default function App() {
     persistEntries(d.entries);
     persistWeekly(d.weeklyLogs);
     persistBooks(d.books);
+    // los respaldos de antes de la matriz no la traen: ahí se conserva la que hay
+    if (d.valores && typeof d.valores === "object" && !Array.isArray(d.valores)) persistValores(d.valores);
   }
 
   // ---- semana ----
@@ -296,6 +313,34 @@ export default function App() {
     } catch (e) {}
   }
 
+  // ---- matriz de valores ----
+  function editValor(areaId, i, fn) {
+    const next = structuredClone(valores);
+    const bloques = (next[areaId] ||= []);
+    fn((bloques[i] ||= emptyValor()));
+    persistValores(next);
+  }
+
+  async function copyValores() {
+    const n = (x) => (x === "" ? "—" : x);
+    const lines = [`Áreas, valores y actividades (disfrute e importancia de ${ESCALA[0]} a ${ESCALA[1]})`, ""];
+    for (const [areaId, nombre] of AREAS) {
+      const bloques = (valores[areaId] || []).filter(valorLleno);
+      if (!bloques.length) continue;
+      lines.push(nombre);
+      for (const b of bloques) {
+        lines.push(`  Valor: ${b.valor || "—"}`);
+        for (const a of b.actividades.filter(actLlena)) lines.push(`    - ${a.texto || "—"} · disfrute ${n(a.disfrute)} · importancia ${n(a.importancia)}`);
+      }
+      lines.push("");
+    }
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setValoresCopied(true);
+      setTimeout(() => setValoresCopied(false), 1800);
+    } catch (e) {}
+  }
+
   // ---- lecturas ----
   function addBook() {
     if (!newBook.titulo.trim()) return;
@@ -327,7 +372,7 @@ export default function App() {
   }
 
   // ---- valores derivados ----
-  const isDiario = view === "diario", isSemana = view === "semana", isLecturas = view === "lecturas";
+  const isDiario = view === "diario", isSemana = view === "semana", isLecturas = view === "lecturas", isValores = view === "valores";
 
   const monthGroups = [];
   const groupMap = {};
@@ -394,19 +439,20 @@ export default function App() {
   const promedio = rated.length ? (rated.reduce((a, b) => a + Number(b.rating), 0) / rated.length).toFixed(1) : null;
   const plural = yearBooks.length === 1 ? "" : "s";
 
-  const tabs = [["diario", "Pensamientos"], ["semana", "Episodios ansiosos"], ["lecturas", "Lecturas"]];
+  const tabs = [["diario", "Pensamientos"], ["semana", "Episodios ansiosos"], ["valores", "Valores"], ["lecturas", "Lecturas"]];
 
   return (
     <div style={rootVars}>
       <header style={{ position: "sticky", top: 0, zIndex: 20, background: "color-mix(in oklch, var(--paper) 88%, transparent)", backdropFilter: "blur(10px)", borderBottom: "1px solid var(--line)" }}>
-        <div style={{ maxWidth: 680, margin: "0 auto", padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+        {/* En el celular las pestañas no entran al lado del título: bajan a su renglón y se deslizan. */}
+        <div style={{ maxWidth: 680, margin: "0 auto", padding: "16px 24px", display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: "8px 16px" }}>
           <div style={{ ...serif, fontStyle: "italic", fontSize: 19, fontWeight: 600, letterSpacing: "-0.01em" }}>Amiga, date cuenta</div>
-          <nav style={{ display: "flex", position: "relative" }}>
+          <nav style={{ display: "flex", position: "relative", overflowX: "auto" }}>
             {tabs.map(([id, text]) => (
               <button key={id} onClick={() => setView(id)}
-                style={{ background: "none", border: "none", cursor: "pointer", fontFamily: "'Inter',sans-serif", fontSize: 13.5, fontWeight: 500, color: view === id ? "var(--ink)" : "var(--ink-soft)", padding: "6px 14px", position: "relative" }}>
+                style={{ background: "none", border: "none", cursor: "pointer", fontFamily: "'Inter',sans-serif", fontSize: 13.5, fontWeight: 500, color: view === id ? "var(--ink)" : "var(--ink-soft)", padding: "6px 14px", position: "relative", whiteSpace: "nowrap" }}>
                 {text}
-                {view === id && <span style={{ position: "absolute", left: 14, right: 14, bottom: -1, height: 2, background: "var(--accent)", animation: "underlineDraw 0.3s ease" }} />}
+                {view === id && <span style={{ position: "absolute", left: 14, right: 14, bottom: 0, height: 2, background: "var(--accent)", animation: "underlineDraw 0.3s ease" }} />}
               </button>
             ))}
           </nav>
@@ -416,13 +462,13 @@ export default function App() {
       <main style={{ maxWidth: 680, margin: "0 auto", padding: "0 24px 120px" }}>
         <section style={{ padding: "56px 0 32px", borderBottom: "1px solid var(--line)" }}>
           <div style={{ ...mono, fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--ink-soft)", marginBottom: 10 }}>
-            {isLecturas ? "control anual de lectura" : isDiario ? (entries.length ? `${entries.length} registro${entries.length === 1 ? "" : "s"}` : "cuaderno personal") : "seguimiento semanal"}
+            {isValores ? "áreas, valores y actividades" : isLecturas ? "control anual de lectura" : isDiario ? (entries.length ? `${entries.length} registro${entries.length === 1 ? "" : "s"}` : "cuaderno personal") : "seguimiento semanal"}
           </div>
           <h1 style={{ ...serif, fontWeight: 500, fontSize: 44, lineHeight: 1.05, margin: "0 0 14px", maxWidth: 520, letterSpacing: "-0.01em" }}>
-            {isLecturas ? "Un año de lecturas, con nombre y apellido." : isDiario ? "Notar el patrón antes de que el patrón te note." : "Una bitácora para tus días difíciles."}
+            {isValores ? "Un valor no se tacha: se practica." : isLecturas ? "Un año de lecturas, con nombre y apellido." : isDiario ? "Notar el patrón antes de que el patrón te note." : "Una bitácora para tus días difíciles."}
           </h1>
           <p style={{ fontSize: 15, color: "var(--ink-soft)", lineHeight: 1.6, maxWidth: 440, margin: 0 }}>
-            {isLecturas ? "Libro, autor, calificación y portada. Un registro, no una lista de deseos." : isDiario ? "Situación, pensamiento y evidencia — para llevar a terapia." : "Registrá qué dispara tu ansiedad y qué te ayuda a bajarla."}
+            {isValores ? "Para cada área de tu vida: qué te importa y qué hacés por eso." : isLecturas ? "Libro, autor, calificación y portada. Un registro, no una lista de deseos." : isDiario ? "Situación, pensamiento y evidencia — para llevar a terapia." : "Registrá qué dispara tu ansiedad y qué te ayuda a bajarla."}
           </p>
           <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginTop: 26, maxWidth: 520 }}>
             <span style={{ ...mono, fontSize: 9.5, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--ink-soft)", flexShrink: 0, paddingTop: 3 }}>Hoy</span>
@@ -705,6 +751,85 @@ export default function App() {
             )}
 
             <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--ink-soft)", lineHeight: 1.6, padding: "40px 20px 0" }}>Usá este registro durante la semana para identificar detonantes. Calificá la intensidad de 0 a 10.</div>
+          </div>
+        )}
+
+        {isValores && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "flex-end", padding: "28px 0 14px" }}>
+              <button className="adc-link" style={linkBtn} onClick={copyValores}>
+                {valoresCopied ? <span style={{ color: "var(--moss)" }}>Copiado ✓</span> : <span>Copiar para terapia</span>}
+              </button>
+            </div>
+
+            <div style={{ border: "1px solid var(--line)", background: "var(--card)", borderRadius: 10, padding: "15px 18px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
+              {[["Valor", <>Una dirección, no algo que se logra y se tacha. Se escribe como un para qué: <i>cultivar mi curiosidad</i>, <i>descansar de verdad</i>.</>],
+                ["Actividad", <>Algo concreto que hacés o podrías hacer: <i>leer 20 min antes de dormir</i>, <i>caminar los domingos con alguien</i>.</>],
+                ["Disfrute e importancia", <>Se califican por separado, de {ESCALA[0]} a {ESCALA[1]}. Que uno sea bajo y el otro alto es normal, y es lo interesante: ahí hay algo que vale aunque no apetezca.</>]].map(([t, texto]) => (
+                <div key={t}>
+                  <div style={{ ...mono, fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--accent)", marginBottom: 3 }}>{t}</div>
+                  <div style={{ fontSize: 13.5, lineHeight: 1.55, color: "var(--ink-soft)" }}>{texto}</div>
+                </div>
+              ))}
+            </div>
+
+            {AREAS.map(([areaId, nombre]) => {
+              const bloques = valores[areaId] || [];
+              return (
+                <section key={areaId} style={{ marginTop: 36 }}>
+                  <div style={{ ...serif, fontSize: 20, fontWeight: 500, marginBottom: 14 }}>{nombre}</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                    {Array.from({ length: renglones(bloques, 1, 3, valorLleno) }, (_, i) => {
+                      const b = bloques[i] || emptyValor();
+                      return (
+                        <div key={i} style={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 8, padding: "16px 18px 18px" }}>
+                          <div style={{ ...label("0.06em"), marginBottom: 6 }}>Valor {i + 1}</div>
+                          <textarea rows={1} aria-label={`${nombre}: valor ${i + 1}`} style={{ ...area, ...serif, fontSize: 16, minHeight: 38, padding: "6px 2px" }}
+                            placeholder={i ? "Otro para qué, si esta área te da más de uno" : "¿Para qué? Ej.: descansar de verdad"}
+                            value={b.valor} onChange={(e) => editValor(areaId, i, (x) => { x.valor = e.target.value; })} />
+                          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 14 }}>
+                            <thead>
+                              <tr>
+                                {["Actividades", "Disfrute", "Importancia"].map((t, k) => (
+                                  <th key={t} style={{ ...label("0.06em"), fontWeight: 400, textAlign: k ? "center" : "left", width: k ? 1 : "auto", padding: k ? "0 0 0 12px" : 0 }}>{t}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {Array.from({ length: renglones(b.actividades, 3, 5, actLlena) }, (_, j) => {
+                                const a = b.actividades[j] || emptyActividad();
+                                const set = (campo, v) => editValor(areaId, i, (x) => { (x.actividades[j] ||= emptyActividad())[campo] = v; });
+                                // ponytail: umbral fijo, 40% de la escala (5 y 10 marca, 6 y 9 no). Si marca de más, se sube acá.
+                                const vale = a.disfrute !== "" && a.importancia !== "" && a.importancia - a.disfrute >= (ESCALA[1] - ESCALA[0]) * 0.4;
+                                return (
+                                  <tr key={j} style={{ verticalAlign: "top" }}>
+                                    <td style={{ padding: "2px 0" }}>
+                                      <textarea rows={1} aria-label={`Actividad ${j + 1}`} style={{ ...area, fontSize: 14, minHeight: 36, padding: "6px 2px" }}
+                                        placeholder={j ? "" : "Algo concreto que hacés"} value={a.texto} onChange={(e) => set("texto", e.target.value)} />
+                                      {vale && <div style={{ ...mono, fontSize: 10, color: "var(--accent)", padding: "4px 2px 0" }}>vale aunque no apetezca</div>}
+                                    </td>
+                                    {[["disfrute", "Disfrute"], ["importancia", "Importancia"]].map(([campo, t]) => (
+                                      <td key={campo} style={{ padding: "2px 0 2px 12px" }}>
+                                        <input type="number" min={ESCALA[0]} max={ESCALA[1]} placeholder={`${ESCALA[0]}-${ESCALA[1]}`} aria-label={`${t} de la actividad ${j + 1}`}
+                                          style={{ ...field, ...mono, fontSize: 14, textAlign: "center", padding: "6px 2px" }}
+                                          value={a[campo]}
+                                          onChange={(e) => set(campo, e.target.value === "" ? "" : Math.max(ESCALA[0], Math.min(ESCALA[1], Number(e.target.value))))} />
+                                      </td>
+                                    ))}
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })}
+
+            <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--ink-soft)", lineHeight: 1.6, padding: "40px 20px 0" }}>No hace falta llenar los tres valores de cada área: si esa área te da uno o dos, alcanza. Con tres actividades por valor, también.</div>
           </div>
         )}
 
